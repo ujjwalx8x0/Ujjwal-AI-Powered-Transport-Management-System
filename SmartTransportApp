@@ -1,0 +1,165 @@
+import javax.swing.*;
+import java.awt.*;
+import java.sql.*;
+import java.util.*;
+import java.util.concurrent.*;
+
+//OOP: Interface
+interface Trackable {
+    String getGpsId();
+    void updateLocation(double lat, double lon);
+
+}
+
+//OOP: Abstract Class
+abstract class Vehicle implements Trackable {
+    protected String id, regNo;
+    protected double fuelEfficiency;
+    protected String gpsId;
+
+    public Vehicle(String id, String regNo, double fuelEfficiency) {
+        this.id = id;
+
+        this.regNo = regNo;
+        this.fuelEfficiency = fuelEfficiency;
+    }
+
+    public abstract double estimateCost(Route r);
+
+    
+    public String getGpsId() { return gpsId; }
+
+    
+    public void updateLocation(double lat, double lon) {
+        System.out.println(getClass().getSimpleName() + " moved to (" + lat + "," + lon + ")");
+    }
+
+    
+    public String toString() {
+        return getClass().getSimpleName() + "[" + regNo + "]";
+    }
+}
+
+//OOP: Inheritance + Polymorphism
+class Bus extends Vehicle {
+    private int seats;
+    public Bus(String id, String regNo, double eff, int seats) {
+        super(id, regNo, eff);
+        this.seats = seats;
+        this.gpsId = "BUS-" + id;
+    }
+    
+    public double estimateCost(Route r) {
+        return (r.distanceKm / fuelEfficiency) * r.fuelPrice + seats * 0.1;
+    }
+}
+
+class Truck extends Vehicle {
+    private double load;
+    public Truck(String id, String regNo, double eff, double load) {
+        super(id, regNo, eff);
+        this.load = load;
+        this.gpsId = "TRK-" + id;
+    }
+    
+    public double estimateCost(Route r) {
+        return (r.distanceKm / fuelEfficiency) * r.fuelPrice * (1 + r.congestion * 0.1);
+    }
+}
+
+//Exception Handling
+class InvalidDataException extends Exception {
+    public InvalidDataException(String msg) { super(msg); }
+}
+
+//Route Model
+class Route {
+    String src, dst;
+    double distanceKm, fuelPrice;
+    int congestion;
+    public Route(String src, String dst, double d, double f, int c) throws InvalidDataException {
+        if (d <= 0) throw new InvalidDataException("Distance must be > 0");
+        this.src = src; this.dst = dst; this.distanceKm = d; this.fuelPrice = f; this.congestion = c;
+    }
+    @Override
+    public String toString() { return src + " -> " + dst + " (" + distanceKm + " km)"; }
+}
+
+//Multithreading & Synchronization
+class TrafficUpdater implements Runnable {
+    private final List<Route> routes;
+    public TrafficUpdater(List<Route> routes) { this.routes = routes; }
+    @Override
+    public void run() {
+        synchronized (routes) {
+            Random r = new Random();
+            for (Route rt : routes) {
+                rt.congestion = r.nextInt(10);
+            }
+            System.out.println("Traffic updated by thread " + Thread.currentThread().getName());
+        }
+    }
+}
+
+//JDBC Connectivity
+class DBUtil {
+    public static Connection getConnection() throws Exception {
+        return DriverManager.getConnection("jdbc:mysql://localhost:3306/transportdb","root","password");
+    }
+    public static void saveVehicle(Vehicle v) throws Exception {
+        try (PreparedStatement ps = getConnection().prepareStatement(
+                "INSERT INTO vehicles(id, reg_no, type, fuel_eff) VALUES(?,?,?,?)")) {
+            ps.setString(1, v.id);
+            ps.setString(2, v.regNo);
+            ps.setString(3, v.getClass().getSimpleName());
+            ps.setDouble(4, v.fuelEfficiency);
+            ps.executeUpdate();
+        }
+    }
+}
+
+//GUI
+public class SmartTransportApp extends JFrame {
+    private final JTextArea log = new JTextArea(10,40);
+    private final Map<String,Vehicle> vehicles = new HashMap<>();
+    private final List<Route> routes = Collections.synchronizedList(new ArrayList<>());
+
+    public SmartTransportApp() {
+        super("AI-Powered Smart Transport");
+        setLayout(new BorderLayout());
+        JButton btn = new JButton("Optimize Route");
+        JTextField field = new JTextField(10);
+        JPanel top = new JPanel();
+        top.add(new JLabel("Vehicle ID:")); top.add(field); top.add(btn);
+        add(top, BorderLayout.NORTH);
+        add(new JScrollPane(log), BorderLayout.CENTER);
+
+        // Demo data
+        vehicles.put("B1", new Bus("B1","UP-14-1234",4.5,40));
+        vehicles.put("T1", new Truck("T1","UP-32-5678",3.2,12));
+        try {
+            routes.add(new Route("Lucknow","Kanpur",85,98,3));
+            routes.add(new Route("Lucknow","Varanasi",320,98,6));
+        } catch(Exception e){ log.append(e.getMessage()+"\n"); }
+
+        // Multithreading traffic update
+        ExecutorService exec = Executors.newFixedThreadPool(2);
+        exec.submit(new TrafficUpdater(routes));
+
+        btn.addActionListener(e -> {
+            String id = field.getText().trim();
+            Vehicle v = vehicles.get(id);
+            if (v==null) { log.append("Vehicle not found\n"); return; }
+            Route best = routes.stream().min((r1,r2)->Double.compare(v.estimateCost(r1),v.estimateCost(r2))).orElse(null);
+            log.append("Best route for "+v+": "+best+"\n");
+        });
+
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        pack(); setLocationRelativeTo(null); setVisible(true);
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(SmartTransportApp::new);
+
+    }
+}
